@@ -214,6 +214,7 @@ fn toposort_real_module_ids<'a>(
 
             // dbg!(&deps_of_circle);
 
+            // FIXME: this can be an infinite loop :(
             if !deps_of_circle.is_empty() {
                 queue.push_front(id);
 
