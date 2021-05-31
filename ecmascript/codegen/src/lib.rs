@@ -823,10 +823,6 @@ impl<'a> Emitter<'a> {
             space!();
             emit!(i);
             emit!(node.class.type_params);
-
-            formatting_space!();
-        } else {
-            space!();
         }
 
         self.emit_class_trailing(&node.class)?;
@@ -835,12 +831,13 @@ impl<'a> Emitter<'a> {
     #[emitter]
     fn emit_class_trailing(&mut self, node: &Class) -> Result {
         if node.super_class.is_some() {
+            space!();
             keyword!("extends");
             space!();
             emit!(node.super_class);
-            space!();
         }
 
+        formatting_space!();
         punct!("{");
         self.emit_list(node.span, Some(&node.body), ListFormat::ClassMembers)?;
         punct!("}");
@@ -2659,6 +2656,10 @@ fn escape_with_source<'s>(
 /// spans of string literals created from [TplElement] do not have `starting`
 /// quote.
 fn is_single_quote(cm: &SourceMap, span: Span) -> Option<bool> {
+    if span.is_dummy() {
+        return None;
+    }
+
     let start = cm.lookup_byte_offset(span.lo);
     let end = cm.lookup_byte_offset(span.hi);
 
