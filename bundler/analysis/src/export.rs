@@ -1,40 +1,17 @@
-use super::Bundler;
-use crate::{load::Load, resolve::Resolve};
-use swc_bundler_analysis::export::{ExportFinder, RawExports};
+use crate::{
+    handler::Handler,
+    id::Id,
+    specifier::{Source, Specifier},
+};
+use indexmap::IndexMap;
+use swc_atoms::{js_word, JsWord};
 use swc_common::{FileName, SyntaxContext};
 use swc_ecma_ast::*;
-use swc_ecma_visit::VisitMutWith;
-
-impl<L, R> Bundler<'_, L, R>
-where
-    L: Load,
-    R: Resolve,
-{
-    /// TODO: Support pattern like
-    ///     export const [a, b] = [1, 2]
-    pub(super) fn extract_export_info(
-        &self,
-        file_name: &FileName,
-        module: &mut Module,
-        export_ctxt: SyntaxContext,
-    ) -> RawExports {
-        self.run(|| {
-            let mut v = ExportFinder {
-                info: Default::default(),
-                file_name,
-                handler: self,
-                export_ctxt,
-            };
-
-            module.visit_mut_with(&mut v);
-
-            v.info
-        })
-    }
-}
+use swc_ecma_utils::find_ids;
+use swc_ecma_visit::{noop_visit_mut_type, VisitMut};
 
 #[derive(Debug, Default)]
-pub(super) struct RawExports {
+pub struct RawExports {
     /// Key is None if it's exported from the module itself.
     pub items: IndexMap<Option<Str>, Vec<Specifier>>,
 }
@@ -45,36 +22,33 @@ pub struct Exports {
     pub reexports: Vec<(Source, Vec<Specifier>)>,
 }
 
-struct ExportFinder<'a, 'b, L, R>
+/// Find exports and applies appropriate span hygiene.
+pub struct ExportFinder<'a, H>
 where
-    L: Load,
-    R: Resolve,
+    H: Handler,
 {
-    info: RawExports,
-    file_name: &'a FileName,
-    bundler: &'a Bundler<'b, L, R>,
-    export_ctxt: SyntaxContext,
+    /// Use default value while creation.
+    pub info: RawExports,
+    /// THe name of the file currently being analyzed.
+    pub file_name: &'a FileName,
+    pub handler: &'a H,
+
+    /// The 'export' context for current module.
+    pub export_ctxt: SyntaxContext,
 }
 
-impl<L, R> ExportFinder<'_, '_, L, R>
+impl<H> ExportFinder<'_, H>
 where
-    L: Load,
-    R: Resolve,
+    H: Handler,
 {
     /// Returns `(local, export)`.
     fn ctxt_for(&self, src: &JsWord) -> Option<(SyntaxContext, SyntaxContext)> {
         // Don't apply mark if it's a core module.
-        if self
-            .bundler
-            .config
-            .external_modules
-            .iter()
-            .any(|v| v == src)
-        {
+        if self.handler.is_external_module(src) {
             return None;
         }
-        let path = self.bundler.resolve(self.file_name, src).ok()?;
-        let (_, local_mark, export_mark) = self.bundler.scope.module_id_gen.gen(&path);
+        let path = self.handler.resolve(self.file_name, src)?;
+        let (_, local_mark, export_mark) = self.handler.get_module_info(&path);
 
         Some((
             SyntaxContext::empty().apply_mark(local_mark),
@@ -84,30 +58,23 @@ where
 
     fn mark_as_wrapping_required(&self, src: &JsWord) {
         // Don't apply mark if it's a core module.
-        if self
-            .bundler
-            .config
-            .external_modules
-            .iter()
-            .any(|v| v == src)
-        {
+        if self.handler.is_external_module(&src) {
             return;
         }
-        let path = self.bundler.resolve(self.file_name, src);
+        let path = self.handler.resolve(self.file_name, src);
         let path = match path {
-            Ok(v) => v,
+            Some(v) => v,
             _ => return,
         };
-        let (id, _, _) = self.bundler.scope.module_id_gen.gen(&path);
+        let (id, _, _) = self.handler.get_module_info(&path);
 
-        self.bundler.scope.mark_as_wrapping_required(id);
+        self.handler.mark_as_wrapping_required(id);
     }
 }
 
-impl<L, R> VisitMut for ExportFinder<'_, '_, L, R>
+impl<H> VisitMut for ExportFinder<'_, H>
 where
-    L: Load,
-    R: Resolve,
+    H: Handler,
 {
     noop_visit_mut_type!();
 
